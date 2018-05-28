@@ -1,4 +1,4 @@
-# codecommit-hugo-s3-lambda
+# codecommit-s3-lambda
 
 a lambda function that clones a codecommit repo, does a hugo build, and pushes the artifacts to s3
 
