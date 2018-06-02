@@ -17,10 +17,11 @@ deps:
 clean:
 	rm -rf build/
 	rm -f *.zip
+	rm main
 
 .pre-build:
 	mkdir -p build/
 
 build: .pre-build
-	GOOS=linux go build -o ${APP_NAME} ./main.go
+	GOOS=linux go build -o ${APP_NAME} ./main.go ./sync.go
 	zip build/main.zip ${APP_NAME} libgit2.so libgit2.so.0.26.3 libgit2.so.26 libhttp_parser.so libhttp_parser.so.2 libhttp_parser.so.2.0

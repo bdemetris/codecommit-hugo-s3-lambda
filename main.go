@@ -16,11 +16,13 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/codecommit"
+	"github.com/aws/aws-sdk-go/service/s3"
 	git "gopkg.in/libgit2/git2go.v26"
 )
 
 const (
-	cloneStore = "/tmp/store"
+	cloneStore  = "/tmp/store"
+	publicStore = "/tmp/store/public"
 )
 
 var (
@@ -160,11 +162,68 @@ func clone(url string, path string) *git.Repository {
 	return repo
 }
 
+func s3ClearBucket() error {
+	// Initialize a session in us-west-2 that the SDK will use to load
+	// credentials from the shared credentials file ~/.aws/credentials.
+	sess, _ := session.NewSession(&aws.Config{
+		Region: aws.String(region)},
+	)
+
+	// Create S3 service client
+	svc := s3.New(sess)
+
+	// Get the list of objects
+	// Note that if the bucket has more than 1000 objects,
+	// we have to run this multiple times
+	hasMoreObjects := true
+	// Keep track of how many objects we delete
+	totalObjects := 0
+
+	for hasMoreObjects {
+		resp, err := svc.ListObjects(&s3.ListObjectsInput{Bucket: aws.String(bucket)})
+		if err != nil {
+			exitErrorf("Unable to list items in bucket %q, %v", bucket, err)
+		}
+
+		numObjs := len(resp.Contents)
+		totalObjects += numObjs
+
+		// Create Delete object with slots for the objects to delete
+		var items s3.Delete
+		var objs = make([]*s3.ObjectIdentifier, numObjs)
+
+		for i, o := range resp.Contents {
+			// Add objects from command line to array
+			objs[i] = &s3.ObjectIdentifier{Key: aws.String(*o.Key)}
+		}
+
+		// Add list of objects to delete to Delete object
+		items.SetObjects(objs)
+
+		// Delete the items
+		_, err = svc.DeleteObjects(&s3.DeleteObjectsInput{Bucket: &bucket, Delete: &items})
+		if err != nil {
+			exitErrorf("Unable to delete objects from bucket %q, %v", bucket, err)
+		}
+
+		hasMoreObjects = *resp.IsTruncated
+	}
+
+	fmt.Println("Deleted", totalObjects, "object(s) from bucket", bucket)
+
+	return nil
+}
+
+func exitErrorf(msg string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, msg+"\n", args...)
+	os.Exit(1)
+}
+
 func HandleRequest(evt events.CodeCommitEvent) error {
 
 	var repo string
 
-	os.Remove("/tmp")
+	os.RemoveAll(cloneStore)
 
 	for _, record := range evt.Records {
 		if record.EventSourceARN != "" {
@@ -180,6 +239,9 @@ func HandleRequest(evt events.CodeCommitEvent) error {
 	}
 
 	clone(cloneInfo.URL, cloneStore)
+
+	s3ClearBucket()
+	SyncFolderToBucket(bucket, region, publicStore)
 
 	return nil
 
